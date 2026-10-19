@@ -144,6 +144,12 @@ By default, the following options are set (and you can more details on each belo
 - [NODES_DELETE](https://docs.docker.com/engine/api/v1.41/#tag/Node/operation/NodeDelete)
 - [VOLUMES_DELETE](https://docs.docker.com/engine/api/v1.41/#tag/Volume/operation/VolumeDelete)
 
+### Restricting Access to Specific Containers
+
+The optional `ALLOWED_CONTAINERS` option takes a comma-separated list of container names and further restricts the options that act on a single container (`CONTAINERS_ATTACH`, `CONTAINERS_EXEC`, `CONTAINERS_KILL`, `CONTAINERS_PAUSE`, `CONTAINERS_RENAME`, `CONTAINERS_RESIZE`, `CONTAINERS_RESTART`, `CONTAINERS_START`, `CONTAINERS_STOP`, `CONTAINERS_UNPAUSE`, `CONTAINERS_UPDATE` and `CONTAINERS_WAIT`) to those containers only. For example, with `CONTAINERS_RESTART=1` and `ALLOWED_CONTAINERS=watchtower,my-app`, the `watchtower` and `my-app` containers can be restarted, while restart requests for any other container are rejected. When `ALLOWED_CONTAINERS` is not set, these options apply to all containers.
+
+Note that the match is done against the container reference in the request URL, so the client must refer to the container by the name you configured (requests that use the container ID will be rejected).
+
 ## Inspiration
 
 This project was inspired by [tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) and [fluencelabs/docker-socket-proxy](https://github.com/fluencelabs/docker-socket-proxy). Both of those projects build upon haproxy while I am more familiar (but by no means an expert) with Nginx so I have used Nginx for this project. I also wanted to include a finer level of control similar to what is included in fluencelabs' project, and also wanted to include more detailed log messages and client messages to assist with setup and debuging.
