@@ -149,7 +149,7 @@ for key in VARS:
 
         # Restrict per-container endpoints to the allowed containers
         regex = VARS[key]['regex']
-        if ALLOWED_CONTAINERS:
+        if ALLOWED_CONTAINERS and regex.startswith("containers/"):
             regex = regex.replace("[a-zA-Z0-9_.-]+", "(" + "|".join(map(re.escape, ALLOWED_CONTAINERS)) + ")")
 
         # Output location block
