@@ -170,6 +170,17 @@ for key in VARS:
             "        }\n",
             "\n"
         ])
+
+        # Output location block for descriptive errors for containers not allowed
+        if (regex != VARS[key]['regex'] and os.environ.get("DESCRIPTIVE_ERRORS") == "1"):
+            f.writelines([
+                f"        # {key} forbidden for other containers\n",
+                f"        location ~ ^(/v[\d\.]+)?/{VARS[key]['regex']} {{\n",
+                f"            add_header 'docker-proxy-rule' 'Location: {key} (CONTAINER NOT ALLOWED)' always;\n"
+                f"            return 403 '403 Forbidden: docker-socket-proxy is configured to not allow access to this function. To enable this function add the container to the ALLOWED_CONTAINERS option.';\n",
+                "        }\n",
+                "\n"
+            ])
     elif (os.environ.get("DESCRIPTIVE_ERRORS") == "1"):
         # Output location block for descriptive errors for forbidden locations
         f.writelines([
