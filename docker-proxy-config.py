@@ -194,7 +194,7 @@ for key in VARS:
                 rule = "Default (BLOCKED)"
                 message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function."
             name_check = [
-                f"            if ($arg_name !~ \"^(%2F|/)?{names}$\") {{\n",
+                f"            if ($args !~ \"^(platform=[^&]*&)?name=(%2[Ff]|/)?{names}(&platform=[^&]*)?$\") {{\n",
                 f"                add_header 'docker-proxy-rule' 'Location: {rule}' always;\n",
                 f"                return 403 '{message}';\n",
                 "            }\n",
