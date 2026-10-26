@@ -44,6 +44,8 @@ ENV DESCRIPTIVE_ERRORS=1 \
     NODES_DELETE=0 \
     PING=1 \
     PLUGINS=0 \
+    REMOVE_ENV=0 \
+    REMOVE_LABELS=0 \
     SECRETS=0 \
     SERVICES=0 \
     SESSION=0 \
@@ -61,3 +63,4 @@ RUN apk add --update --no-cache python3
 
 # Copy files
 COPY --chmod=775 docker-proxy-config.py /docker-entrypoint.d/10-docker-proxy-config.sh
+COPY docker-proxy-filter.js /etc/nginx/njs/

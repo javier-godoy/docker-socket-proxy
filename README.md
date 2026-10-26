@@ -160,6 +160,25 @@ When `ALLOWED_CONTAINERS` is set, `CONTAINERS_CREATE` only creates containers wh
 
 Note that the match is done against the container reference in the request URL, so the client must refer to the container by the name you configured (requests that use the container ID will be rejected).
 
+`ALLOWED_CONTAINERS` also filters the responses of the following options by the name of the container they describe, so the container may be referred to by its ID:
+
+- `CONTAINERS`: other containers are not listed (`GET /containers/json`), and inspecting them (`GET /containers/{id}/json`) is rejected.
+- `EVENTS`: only events of the allowed containers are returned. Events of other types (images, networks, volumes, etc.) are not returned.
+- `IMAGES`: other containers are removed from the containers using each image (`GET /images/json?manifests=1`).
+- `NETWORKS`: other containers are removed from the containers attached to each network (`GET /networks/{id}`).
+- `SYSTEM`: other containers are removed from the disk usage (`GET /system/df`).
+
+`ALLOWED_CONTAINERS` also looks up the container affected by the following options, which do not refer to it by name in the request URL:
+
+- `CONTAINERS_CREATE`: containers that share the network, PID, IPC or cgroup namespace (`container:<name>`), the volumes or the links of other containers are rejected.
+- `EXEC`: exec instances of other containers are rejected.
+- `NETWORKS_CONNECT` and `NETWORKS_DISCONNECT`: connecting or disconnecting other containers is rejected.
+
+### Removing Labels and Environment Variables
+
+- `REMOVE_LABELS`: Removes the container labels from the responses of `CONTAINERS` (list and inspect), `SYSTEM` (disk usage) and `EVENTS` (container and image events), keeping only the attributes that Docker adds to events (e.g. `name`, `image` and `exitCode`).
+- `REMOVE_ENV`: Removes all the environment variables from the responses of `CONTAINERS` (inspect).
+
 ## Inspiration
 
 This project was inspired by [tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) and [fluencelabs/docker-socket-proxy](https://github.com/fluencelabs/docker-socket-proxy). Both of those projects build upon haproxy while I am more familiar (but by no means an expert) with Nginx so I have used Nginx for this project. I also wanted to include a finer level of control similar to what is included in fluencelabs' project, and also wanted to include more detailed log messages and client messages to assist with setup and debuging.
