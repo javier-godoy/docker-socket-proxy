@@ -60,6 +60,8 @@ services:
       NODES_DELETE: 0
       PING: 1
       PLUGINS: 0
+      REMOVE_ENV: 0
+      REMOVE_LABELS: 0
       SECRETS: 0
       SERVICES: 0
       SESSION: 0

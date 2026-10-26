@@ -95,8 +95,14 @@ f = open("/etc/nginx/nginx.conf", "w")
 
 # Output generic nignx.conf content, but have workers run as root so they can access the docker socket.
 f.write('''user root root; # Workers need root access to access to docker socket.
+load_module modules/ngx_http_js_module.so;
 error_log /var/log/nginx/error.log notice;
 pid /var/run/nginx.pid;
+
+env ALLOWED_CONTAINERS;
+env DESCRIPTIVE_ERRORS;
+env REMOVE_ENV;
+env REMOVE_LABELS;
 
 events {
 ''')
@@ -128,6 +134,10 @@ if (os.environ.get("PROXY_READ_TIMEOUT")):
 f.write('''
     #gzip  on;
 
+    js_engine qjs;
+    js_import docker_proxy from /etc/nginx/njs/docker-proxy-filter.js;
+    js_var $docker_proxy_pending;
+
     # Used below for websocket connections
     map $http_upgrade $connection_upgrade {
         default upgrade;
@@ -144,10 +154,49 @@ f.write('''
         # Deny everything that doesn't match another location
         location / {
             add_header 'docker-proxy-rule' 'Location: Default (BLOCKED)' always;
-            return 403 '403 Forbidden: docker-socket-proxy is configured to not allow access to this function.'; 
+            return 403 '403 Forbidden: docker-socket-proxy is configured to not allow access to this function.';
         }
 
 ''')
+
+for name, size, body in [("inspect", "1m", False), ("list", "16m", False), ("forward", "1m", True)]:
+    f.writelines([
+        f"        location /docker-proxy-{name}/ {{\n",
+        "            internal;\n",
+        "            proxy_pass http://docker/;\n",
+        "            proxy_http_version 1.1;\n",
+        "            proxy_set_header Connection \"\";\n",
+        "            proxy_set_header Host $host;\n",
+        *([] if body else [
+            "            proxy_pass_request_body off;\n",
+            "            proxy_set_header Content-Length \"\";\n",
+        ]),
+        "            proxy_buffering on;\n",
+        "            proxy_buffers 64 16k;\n",
+        f"            subrequest_output_buffer_size {size};\n",
+        "        }\n",
+        "\n"
+    ])
+
+if ALLOWED_CONTAINERS:
+    if os.environ.get("DESCRIPTIVE_ERRORS") == "1":
+        rule = "EXEC (CONTAINER NOT ALLOWED)"
+        message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function. To enable this function add the container to the ALLOWED_CONTAINERS option."
+    else:
+        rule = "Default (BLOCKED)"
+        message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function."
+    f.writelines([
+        "        location = /docker-proxy-exec-auth {\n",
+        "            internal;\n",
+        "            js_content docker_proxy.authorizeExec;\n",
+        "        }\n",
+        "\n",
+        "        location @docker-proxy-exec-forbidden {\n",
+        f"            add_header 'docker-proxy-rule' 'Location: {rule}' always;\n",
+        f"            return 403 '{message}';\n",
+        "        }\n",
+        "\n"
+    ])
 
 # Output the relevant locations
 for key in VARS:
@@ -200,6 +249,74 @@ for key in VARS:
                 "            }\n",
             ]
 
+        filters = []
+        if key == "CONTAINERS" and (ALLOWED_CONTAINERS or os.environ.get("REMOVE_LABELS") == "1" or os.environ.get("REMOVE_ENV") == "1"):
+            f.writelines([
+                "        # CONTAINERS (inspect)\n",
+                rf"        location ~ ^(/v[\d\.]+)?/containers/[a-zA-Z0-9_.-]+/json$ {{" "\n",
+                "            limit_except GET {\n",
+                "                deny all;\n",
+                "            }\n",
+                "            js_content docker_proxy.inspect;\n",
+                "        }\n",
+                "\n",
+                "        # CONTAINERS (list)\n",
+                rf"        location ~ ^(/v[\d\.]+)?/containers/json$ {{" "\n",
+                "            limit_except GET {\n",
+                "                deny all;\n",
+                "            }\n",
+                "            js_content docker_proxy.list;\n",
+                "        }\n",
+                "\n",
+            ])
+        if key == "EVENTS" and (ALLOWED_CONTAINERS or os.environ.get("REMOVE_LABELS") == "1"):
+            filters = [
+                "            js_header_filter docker_proxy.eventsHeader;\n",
+                "            js_body_filter docker_proxy.eventsBody buffer_type=buffer;\n",
+            ]
+        if key == "EXEC" and ALLOWED_CONTAINERS:
+            filters = [
+                "            auth_request /docker-proxy-exec-auth;\n",
+                "            error_page 403 = @docker-proxy-exec-forbidden;\n",
+            ]
+        responses = {
+            "NETWORKS": ("networks", r"networks(/[a-zA-Z0-9_.-]+)?$"),
+            "SYSTEM": ("systemDf", r"system/df$"),
+            "IMAGES": ("images", r"images/(.+/)?json$"),
+        }
+        if key in responses and ALLOWED_CONTAINERS or key == "SYSTEM" and os.environ.get("REMOVE_LABELS") == "1":
+            handler, path = responses[key]
+            f.writelines([
+                f"        # {key} (filtered)\n",
+                rf"        location ~ ^(/v[\d\.]+)?/{path} {{" "\n",
+                f"            limit_except {type} {{\n",
+                "                deny all;\n",
+                "            }\n",
+                f"            js_content docker_proxy.{handler};\n",
+                "        }\n",
+                "\n"
+            ])
+        requests = {
+            "CONTAINERS_CREATE": "containerCreate",
+            "NETWORKS_CONNECT": "networkConnect",
+            "NETWORKS_DISCONNECT": "networkDisconnect",
+        }
+        if key in requests and ALLOWED_CONTAINERS:
+            f.writelines([
+                f"        # {key}\n",
+                rf"        location ~ ^(/v[\d\.]+)?/{regex} {{" "\n",
+                *name_check,
+                f"            limit_except {type} {{\n",
+                "                deny all;\n",
+                "            }\n",
+                "            client_body_buffer_size 1m;\n",
+                "            client_body_in_single_buffer on;\n",
+                f"            js_content docker_proxy.{requests[key]};\n",
+                "        }\n",
+                "\n"
+            ])
+            continue
+
         # Output location block
         f.writelines([
             f"        # {key}\n",
@@ -213,6 +330,7 @@ for key in VARS:
             "            proxy_set_header Host $host;\n",
             # End of websockets lines
             *name_check,
+            *filters,
             f"            limit_except {type} {{\n",
             "                deny all;\n",
             "            }\n",
