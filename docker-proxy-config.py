@@ -21,6 +21,13 @@
 # SOFTWARE.
 
 import os
+import re
+import sys
+
+# Optional list of containers that per-container endpoints are restricted to
+ALLOWED_CONTAINERS = [n.strip() for n in os.environ.get("ALLOWED_CONTAINERS", "").split(",") if n.strip()]
+if not all(re.fullmatch("[a-zA-Z0-9_.-]+", n) for n in ALLOWED_CONTAINERS):
+    sys.exit("docker-proxy-config: invalid container names in ALLOWED_CONTAINERS")
 
 # Setup variables (the order matters from an nginx location parsing perspective)
 #
@@ -153,10 +160,50 @@ for key in VARS:
         else:
             type = VARS[key]['type']
 
+        # Restrict per-container endpoints to the allowed containers
+        regex = VARS[key]['regex']
+        names = "(" + "|".join(map(re.escape, ALLOWED_CONTAINERS)) + ")"
+        if ALLOWED_CONTAINERS and regex.startswith("containers/"):
+            regex = regex.replace("[a-zA-Z0-9_.-]+", names)
+        if ALLOWED_CONTAINERS and key == "CONTAINERS":
+            regex = f"containers/(json$|{names}(/|$))"
+
+        if ALLOWED_CONTAINERS and key == "CONTAINERS_PRUNE":
+            if os.environ.get("DESCRIPTIVE_ERRORS") == "1":
+                rule = f"{key} (NOT ALLOWED WITH ALLOWED_CONTAINERS)"
+                message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function. To enable this function remove the ALLOWED_CONTAINERS option."
+            else:
+                rule = "Default (BLOCKED)"
+                message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function."
+            f.writelines([
+                f"        # {key} forbidden with ALLOWED_CONTAINERS\n",
+                rf"        location ~ ^(/v[\d\.]+)?/{regex} {{" "\n",
+                f"            add_header 'docker-proxy-rule' 'Location: {rule}' always;\n",
+                f"            return 403 '{message}';\n",
+                "        }\n",
+                "\n"
+            ])
+            continue
+
+        name_check = []
+        if ALLOWED_CONTAINERS and key == "CONTAINERS_CREATE":
+            if os.environ.get("DESCRIPTIVE_ERRORS") == "1":
+                rule = f"{key} (CONTAINER NOT ALLOWED)"
+                message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function. To enable this function add the container to the ALLOWED_CONTAINERS option."
+            else:
+                rule = "Default (BLOCKED)"
+                message = "403 Forbidden: docker-socket-proxy is configured to not allow access to this function."
+            name_check = [
+                f"            if ($arg_name !~ \"^(%2F|/)?{names}$\") {{\n",
+                f"                add_header 'docker-proxy-rule' 'Location: {rule}' always;\n",
+                f"                return 403 '{message}';\n",
+                "            }\n",
+            ]
+
         # Output location block
         f.writelines([
             f"        # {key}\n",
-            f"        location ~ ^(/v[\d\.]+)?/{VARS[key]['regex']} {{\n",
+            f"        location ~ ^(/v[\d\.]+)?/{regex} {{\n",
             f"            add_header 'docker-proxy-rule' 'Location: {key}' always;\n"
             "            proxy_pass http://docker;\n",
             # Bellow added to enable websockets (See https://www.nginx.com/blog/websocket-nginx/)
@@ -165,12 +212,24 @@ for key in VARS:
             "            proxy_set_header Connection $connection_upgrade;\n",
             "            proxy_set_header Host $host;\n",
             # End of websockets lines
+            *name_check,
             f"            limit_except {type} {{\n",
             "                deny all;\n",
             "            }\n",
             "        }\n",
             "\n"
         ])
+
+        # Output location block for descriptive errors for containers not allowed
+        if (regex != VARS[key]['regex'] and os.environ.get("DESCRIPTIVE_ERRORS") == "1"):
+            f.writelines([
+                f"        # {key} forbidden for other containers\n",
+                f"        location ~ ^(/v[\d\.]+)?/{VARS[key]['regex']} {{\n",
+                f"            add_header 'docker-proxy-rule' 'Location: {key} (CONTAINER NOT ALLOWED)' always;\n"
+                f"            return 403 '403 Forbidden: docker-socket-proxy is configured to not allow access to this function. To enable this function add the container to the ALLOWED_CONTAINERS option.';\n",
+                "        }\n",
+                "\n"
+            ])
     elif (os.environ.get("DESCRIPTIVE_ERRORS") == "1"):
         # Output location block for descriptive errors for forbidden locations
         f.writelines([
